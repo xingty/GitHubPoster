@@ -1,9 +1,12 @@
 import time
+import json
 
 import requests
 
 from github_poster.loader.base_loader import BaseLoader
 from github_poster.loader.config import SHANBAY_WORD_API
+
+from pathlib import Path
 
 
 class ShanBayLoader(BaseLoader):
@@ -24,11 +27,26 @@ class ShanBayLoader(BaseLoader):
             help="",
         )
 
+    @staticmethod
+    def _load_history(from_year, to_year):
+        filename = f"shanbay_{from_year}_{to_year}.json"
+        file = Path(f"OUT_FOLDER/{filename}")
+        if file.exists():
+            return json.loads(file.read_text())
+
+        return {}
+
+    @staticmethod
+    def _save_history(from_year, to_year, history):
+        filename = f"shanbay_{from_year}_{to_year}.json"
+        file = Path(f"OUT_FOLDER/{filename}")
+        file.write_text(json.dumps(history), encoding="utf-8")
+
     def get_api_data(self):
+        history = self._load_history(self.from_year, self.to_year)
         err_counter = 0
         page = 1
-        datalist = []
-        while err_counter < 10:
+        while err_counter < 5:
             url = SHANBAY_WORD_API.format(user_name=self.user_name, page=page)
             res = requests.get(url)
 
@@ -43,10 +61,20 @@ class ShanBayLoader(BaseLoader):
                 err_counter += 1
 
             objects = data["objects"]
-            datalist = datalist + objects
+            is_end = False
+            for obj in objects:
+                date_key = obj["date"]
+                if history.get(date_key, None):
+                    is_end = True
+                    break
+
+                history[date_key] = obj
+
+            # datalist = datalist + objects
             ipp = data["ipp"] or 20
-            if len(objects) < ipp:
+            if len(objects) < ipp or is_end:
                 break
+
             date = objects[-1]["date"]
             year = int(date[0:4])
             if year < self.from_year:
@@ -55,7 +83,9 @@ class ShanBayLoader(BaseLoader):
             page += 1
             time.sleep(0.5)
 
-        return datalist
+        self._save_history(self.from_year, self.to_year, history)
+        # return datalist
+        return [value for value in history.values()]
 
     def make_track_dict(self):
         data_list = self.get_api_data()
